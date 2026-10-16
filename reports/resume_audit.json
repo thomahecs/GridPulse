@@ -1,0 +1,113 @@
+{
+  "all_claims_verified": false,
+  "verified_count": 5,
+  "total_count": 21,
+  "checks": [
+    {
+      "resume_claim": "36 months of hourly training",
+      "verified": false,
+      "evidence": "Only 16752 hourly training rows are supplied, about 23 months"
+    },
+    {
+      "resume_claim": "1–3 hour lags and previous-day load",
+      "verified": true,
+      "evidence": "lag_1h, lag_2h, lag_3h, lag_24h"
+    },
+    {
+      "resume_claim": "Calendar features",
+      "verified": true,
+      "evidence": "Hour/month encoded from timestamps"
+    },
+    {
+      "resume_claim": "Temperature features",
+      "verified": false,
+      "evidence": "No measured or forecast temperature input in the archive"
+    },
+    {
+      "resume_claim": "Holiday features",
+      "verified": false,
+      "evidence": "No documented holiday features or holiday file in original training data"
+    },
+    {
+      "resume_claim": "Grid search with chronological CV",
+      "verified": true,
+      "evidence": "Full run uses 12 settings / 3 ordered CV folds; quick mode does not tune"
+    },
+    {
+      "resume_claim": "Unseen 3-month holdout",
+      "verified": false,
+      "evidence": "Supplied test is 744 hours (2015-08-01 00:00:00 to 2015-08-31 23:00:00)"
+    },
+    {
+      "resume_claim": "54.9 MW MAE",
+      "verified": false,
+      "evidence": "Measured 47.572 in the dataset's load units; MW unit is not verified"
+    },
+    {
+      "resume_claim": "MAE equals 0.9% of mean load",
+      "verified": false,
+      "evidence": "Measured 4.855%"
+    },
+    {
+      "resume_claim": "Persistence MAE 91.7",
+      "verified": false,
+      "evidence": "Measured 58.951"
+    },
+    {
+      "resume_claim": "Seasonal naive MAE 109.2",
+      "verified": false,
+      "evidence": "Measured 76.480"
+    },
+    {
+      "resume_claim": "Ridge MAE 78.9",
+      "verified": false,
+      "evidence": "Measured 51.727"
+    },
+    {
+      "resume_claim": "40.1% below persistence",
+      "verified": false,
+      "evidence": "Measured 19.30%"
+    },
+    {
+      "resume_claim": "49.7% below seasonal naive",
+      "verified": false,
+      "evidence": "Measured 37.80%"
+    },
+    {
+      "resume_claim": "30.4% below Ridge",
+      "verified": false,
+      "evidence": "Measured 8.03%"
+    },
+    {
+      "resume_claim": "Lag-1 top importance",
+      "verified": false,
+      "evidence": "Current top feature: delta_1h_vs_24h"
+    },
+    {
+      "resume_claim": "Evening peaks largest error source",
+      "verified": false,
+      "evidence": "Highest-error hour: 10:00; evening (18–22) MAE 39.85, other hours 49.60"
+    },
+    {
+      "resume_claim": "Temperature/holiday ablation 59.8 → 54.9 (8.2%)",
+      "verified": false,
+      "evidence": "No temperature or holiday covariate data; current ablation tests calendar/lag profiles only"
+    },
+    {
+      "resume_claim": "Six chronological backtests",
+      "verified": true,
+      "evidence": "Measured 6 windows"
+    },
+    {
+      "resume_claim": "Backtest MAE range 52.1–61.4",
+      "verified": false,
+      "evidence": "Observed 17.32–116.19"
+    },
+    {
+      "resume_claim": "Beat persistence in all six folds",
+      "verified": true,
+      "evidence": "Won 6 of 6 folds"
+    }
+  ],
+  "context": "Audit of the uploaded resume against the supplied archive and this run. Unverified does not mean invented; it means these files and tests cannot establish the claim."
+}

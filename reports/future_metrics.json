@@ -1,13 +1,22 @@
 {
+  "evaluation": "out-of-time rolling next-hour; actual loads are observed before the next prediction",
   "forecast_start": "2015-08-01 00:00:00",
   "forecast_end": "2015-08-31 23:00:00",
   "rows": 744,
+  "mean_observed_load": 979.8363306451613,
   "model": {
-    "mae": 57.34244517336609,
-    "mse": 9032.87038701022,
-    "rmse": 95.04141406255602,
-    "mape_pct": 5.715588033303299,
-    "r2": 0.781094250614071
+    "mae": 47.572420255877475,
+    "mse": 7943.750239853311,
+    "rmse": 89.12771869543903,
+    "mape_pct": 4.925013650690645,
+    "r2": 0.807488370286988
+  },
+  "persistence_1h": {
+    "mae": 58.95061827956989,
+    "mse": 10621.856525268819,
+    "rmse": 103.0623914202888,
+    "mape_pct": 6.105906182590137,
+    "r2": 0.7425862031766182
   },
   "seasonal_naive_24h": {
     "mae": 76.47982526881721,
@@ -16,5 +25,15 @@
     "mape_pct": 8.003809254979052,
     "r2": 0.6194222163677506
   },
-  "mae_improvement_vs_24h_naive_pct": 25.022782188878672
+  "ridge": {
+    "mae": 51.72655325665196,
+    "mse": 7801.395923484762,
+    "rmse": 88.32551117024323,
+    "mape_pct": 5.3319956440644845,
+    "r2": 0.8109382347229698
+  },
+  "mae_pct_of_mean_load": 4.855139452172996,
+  "mae_improvement_vs_persistence_pct": 19.3012361121167,
+  "mae_improvement_vs_seasonal_naive_pct": 37.79742554501628,
+  "mae_improvement_vs_ridge_pct": 8.030948785941524
 }

@@ -1,7 +1,10 @@
 {
-  "project": "GridPulse - Short-Horizon Energy Forecasting ML Engine",
-  "trained_at": "2026-10-06T22:05:17",
-  "feature_profile": "core",
+  "project": "GridPulse",
+  "trained_at_utc": "2026-10-16T21:59:29+00:00",
+  "run_mode": "tuned",
+  "forecast_horizon_hours": 1,
+  "feature_profile": "extended",
+  "prediction_target": "delta_from_previous_hour",
   "feature_names": [
     "hour_00",
     "hour_01",
@@ -42,39 +45,52 @@
     "lag_1h",
     "lag_2h",
     "lag_3h",
-    "lag_24h"
+    "lag_6h",
+    "lag_12h",
+    "lag_24h",
+    "lag_48h",
+    "lag_168h",
+    "day_of_week",
+    "is_weekend",
+    "hour_sin",
+    "hour_cos",
+    "dow_sin",
+    "dow_cos",
+    "rolling_mean_3h",
+    "rolling_mean_6h",
+    "rolling_mean_24h",
+    "rolling_std_24h",
+    "delta_1h_vs_24h"
   ],
   "best_params": {
     "learning_rate": 0.05,
-    "max_depth": 6,
-    "n_estimators": 200
+    "max_depth": 4,
+    "n_estimators": 100
   },
-  "grid_search_cv_mse": 6074.01972201722,
-  "benchmark_holdout": {
-    "mae": 45.76714345405671,
-    "mse": 6290.9633929037445,
-    "rmse": 79.31559363015411,
-    "mape_pct": 7.56962675734113,
-    "r2": 0.8631435565456643
+  "tuning": {
+    "cv_mae": 43.28428892775387,
+    "cv_folds": 3,
+    "candidates": 12
   },
-  "baseline_lag_1h": {
-    "mae": 57.88712492528392,
-    "mse": 10861.785169356446,
-    "rmse": 104.21988854991376,
-    "mape_pct": 9.710429090066638,
-    "r2": 0.7637078464770656
+  "backtest": {
+    "evaluation": "six expanding-window chronological backtests; 28-day nonoverlapping test windows",
+    "folds": 6,
+    "mae_min": 17.320660320047647,
+    "mae_max": 116.19415946026865,
+    "mae_mean": 61.370198906904996,
+    "beats_persistence_folds": 6,
+    "beats_seasonal_naive_folds": 6
   },
-  "baseline_lag_24h": {
-    "mae": 79.2275064753935,
-    "mse": 16557.130288508666,
-    "rmse": 128.67451297171738,
-    "mape_pct": 13.231079602588919,
-    "r2": 0.6398087504925932
-  },
-  "temporal_backtest_mae_mean": 55.36266998254522,
-  "temporal_backtest_mae_std": 26.828287015613817,
-  "prediction_interval_abs_error_q90": 124.08235986328127,
-  "training_rows": 16728,
-  "training_start": "2013-09-03 00:00:00",
-  "training_end": "2015-07-31 23:00:00"
+  "prediction_interval_abs_error_q90": 179.82805432128907,
+  "prediction_interval_note": "Descriptive quantile of backtest residuals; not a calibrated coverage guarantee",
+  "training_rows": 16584,
+  "raw_training_rows": 16752,
+  "training_start": "2013-09-02 00:00:00",
+  "training_end": "2015-07-31 23:00:00",
+  "training_mean_load": 603.1102232569245,
+  "training_data_sha256": "c2d0a433f46573cf019f7c4161eeee148920299f336c03b2d9d6feaa9412bbf5",
+  "test_data_sha256": "ee52dbcba0d7d849f8fb0520008515ca038e0bfcdff6a57b756a98f8e2bd471a",
+  "temperature_available": false,
+  "holiday_available": false,
+  "note": "The supplied files contain load and timestamps only; no temperature/holiday covariates or additional training years."
 }

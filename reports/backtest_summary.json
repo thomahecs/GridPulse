@@ -1,0 +1,9 @@
+{
+  "evaluation": "six expanding-window chronological backtests; 28-day nonoverlapping test windows",
+  "folds": 6,
+  "mae_min": 17.320660320047647,
+  "mae_max": 116.19415946026865,
+  "mae_mean": 61.370198906904996,
+  "beats_persistence_folds": 6,
+  "beats_seasonal_naive_folds": 6
+}

@@ -1,52 +1,43 @@
+"""Out-of-time feature ablation on the same August 2015 evaluation period."""
+
 from pathlib import Path
 import sys
-
-import pandas as pd
-from sklearn.model_selection import train_test_split
-from xgboost import XGBRegressor
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import pandas as pd
 from utils.common import load_json, load_load_data, regression_metrics
+from utils.experiments import make_xgb
 from utils.features import build_features
-
-DATA_DIR = ROOT / "data"
-MODEL_DIR = ROOT / "model"
-REPORT_DIR = ROOT / "reports"
+from src.predict import prepare_evaluation
 
 
 def run_ablation():
-    """Compare feature groups while keeping the model family fixed."""
-    data = load_load_data(DATA_DIR / "train.csv")
-    metadata = load_json(MODEL_DIR / "metadata.json")
-    params = metadata["best_params"]
+    train = load_load_data(ROOT / "data/train.csv")
+    test = load_load_data(ROOT / "data/test.csv")
+    params = load_json(ROOT / "model/metadata.json")["best_params"]
     rows = []
-
     for profile in ("calendar", "autoregressive", "core", "extended"):
-        processed, features = build_features(data, profile=profile)
-        x_train, x_test, y_train, y_test = train_test_split(
-            processed[features], processed["power_load"], test_size=0.30, random_state=22
-        )
-        model = XGBRegressor(
-            objective="reg:squarederror",
-            tree_method="hist",
-            random_state=42,
-            n_jobs=-1,
-            verbosity=0,
-            **params
-        )
-        model.fit(x_train, y_train)
-        pred = model.predict(x_test)
-        metrics = regression_metrics(y_test, pred)
-        rows.append({"feature_profile": profile, "feature_count": len(features), **metrics})
-
-    result = pd.DataFrame(rows).sort_values("mae")
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    result.to_csv(REPORT_DIR / "ablation_results.csv", index=False)
-    print(result.to_string(index=False))
-    print("\nSaved to reports/ablation_results.csv")
+        dev, names = build_features(train, profile)
+        future, eval_names = prepare_evaluation(train, test, profile)
+        assert names == eval_names
+        if "lag_1h" in names:
+            model = make_xgb(params).fit(dev[names], dev.power_load - dev["lag_1h"])
+            pred = model.predict(future[names]) + future["lag_1h"].to_numpy()
+            target = "delta_from_previous_hour"
+        else:
+            model = make_xgb(params).fit(dev[names], dev.power_load)
+            pred = model.predict(future[names])
+            target = "raw_load"
+        metrics = regression_metrics(future.power_load, pred)
+        rows.append({"feature_profile": profile, "features": len(names), "test_rows": len(future), "prediction_target": target, **metrics})
+        print(f"{profile:17s} MAE {metrics['mae']:.3f}", flush=True)
+    result = pd.DataFrame(rows)
+    output = ROOT / "reports/ablation_results.csv"
+    output.parent.mkdir(exist_ok=True)
+    result.to_csv(output, index=False)
     return result
 
 

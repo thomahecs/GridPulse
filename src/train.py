@@ -1,23 +1,25 @@
+"""Fit GridPulse and evaluate six strictly forward-moving validation windows."""
+
 import argparse
-import datetime
-import json
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
-
-import joblib
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-from sklearn.model_selection import GridSearchCV, KFold, TimeSeriesSplit, train_test_split
-from xgboost import XGBRegressor
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from utils.common import load_load_data, regression_metrics, save_json
+import joblib
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
+
+from utils.common import file_sha256, load_load_data, regression_metrics, save_json
+from utils.experiments import DEFAULT_PARAMS, make_ridge, make_xgb, rolling_windows
 from utils.features import build_features
-from utils.log import Logger
 
 DATA_DIR = ROOT / "data"
 FIG_DIR = DATA_DIR / "fig"
@@ -25,187 +27,141 @@ MODEL_DIR = ROOT / "model"
 REPORT_DIR = ROOT / "reports"
 
 
+def tune_model(features, feature_names, first_eval, quick):
+    """Select parameters only on data preceding all six backtest windows."""
+    if quick:
+        return dict(DEFAULT_PARAMS), None
+    cv = TimeSeriesSplit(n_splits=3)
+    search = GridSearchCV(
+        make_xgb(),
+        {"n_estimators": [100, 200, 300], "max_depth": [4, 6], "learning_rate": [0.05, 0.10]},
+        cv=cv, scoring="neg_mean_absolute_error", n_jobs=1,
+    )
+    print("Tuning 12 XGBoost settings with 3 chronological CV folds", flush=True)
+    search.fit(features.iloc[:first_eval][feature_names],
+               features.iloc[:first_eval]["power_load"] - features.iloc[:first_eval]["lag_1h"])
+    return search.best_params_, {"cv_mae": float(-search.best_score_), "cv_folds": 3, "candidates": 12}
+
+
+def run_temporal_backtest(data, feature_names, params):
+    rows = []
+    residuals = []
+    for fold, history, valid in rolling_windows(len(data)):
+        train_frame, val_frame = data.iloc[history], data.iloc[valid]
+        x_train, y_train = train_frame[feature_names], train_frame["power_load"]
+        x_valid, y_valid = val_frame[feature_names], val_frame["power_load"]
+        model = make_xgb(params).fit(x_train, y_train - train_frame["lag_1h"])
+        ridge = make_ridge().fit(x_train, y_train)
+        pred = model.predict(x_valid) + val_frame["lag_1h"].to_numpy()
+        residuals.extend(np.abs(y_valid.to_numpy() - pred).tolist())
+        model_metrics = regression_metrics(y_valid, pred)
+        naive1 = regression_metrics(y_valid, val_frame["lag_1h"])
+        naive24 = regression_metrics(y_valid, val_frame["lag_24h"])
+        ridge_metrics = regression_metrics(y_valid, ridge.predict(x_valid))
+        rows.append({
+            "fold": fold,
+            "train_start": str(train_frame["time"].iloc[0]),
+            "train_end": str(train_frame["time"].iloc[-1]),
+            "valid_start": str(val_frame["time"].iloc[0]),
+            "valid_end": str(val_frame["time"].iloc[-1]),
+            "rows": len(valid),
+            "mae": model_metrics["mae"],
+            "persistence_mae": naive1["mae"],
+            "seasonal_naive_mae": naive24["mae"],
+            "ridge_mae": ridge_metrics["mae"],
+            "beats_persistence": model_metrics["mae"] < naive1["mae"],
+            "beats_seasonal_naive": model_metrics["mae"] < naive24["mae"],
+        })
+        print(f"Fold {fold}/6: MAE {model_metrics['mae']:.2f}, persistence {naive1['mae']:.2f}", flush=True)
+    backtest = pd.DataFrame(rows)
+    backtest.to_csv(REPORT_DIR / "temporal_backtest.csv", index=False)
+    return backtest, float(np.quantile(residuals, 0.9))
+
+
 def plot_load_analysis(data):
-    """Save a compact EDA figure for the historical load series."""
-    FIG_DIR.mkdir(parents=True, exist_ok=True)
-    frame = data.copy()
-    frame["hour"] = frame["time"].dt.hour
-    frame["month"] = frame["time"].dt.month
-    frame["is_weekend"] = frame["time"].dt.dayofweek >= 5
-
-    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-    axes[0, 0].hist(frame["power_load"], bins=60)
-    axes[0, 0].set_title("Load distribution")
-    axes[0, 0].set_xlabel("Power load")
-
-    hourly = frame.groupby("hour")["power_load"].mean()
-    axes[0, 1].plot(hourly.index, hourly.values)
-    axes[0, 1].set_title("Average load by hour")
-    axes[0, 1].set_xlabel("Hour")
-
-    monthly = frame.groupby("month")["power_load"].mean()
-    axes[1, 0].plot(monthly.index, monthly.values, marker="o")
-    axes[1, 0].set_title("Average load by month")
-    axes[1, 0].set_xlabel("Month")
-
-    weekday_mean = frame.loc[~frame["is_weekend"], "power_load"].mean()
-    weekend_mean = frame.loc[frame["is_weekend"], "power_load"].mean()
-    axes[1, 1].bar(["Weekday", "Weekend"], [weekday_mean, weekend_mean])
-    axes[1, 1].set_title("Weekday vs. weekend")
-
+    fig, axs = plt.subplots(1, 2, figsize=(13, 4))
+    axs[0].plot(data["time"], data["power_load"], linewidth=0.35)
+    axs[0].set(title="Historical hourly load", xlabel="Date", ylabel="Load (dataset units)")
+    hours = data.groupby(data["time"].dt.hour)["power_load"].mean()
+    axs[1].plot(hours.index, hours.values)
+    axs[1].set(title="Average load by hour", xlabel="Hour", ylabel="Load (dataset units)")
+    fig.autofmt_xdate()
     fig.tight_layout()
-    fig.savefig(FIG_DIR / "load_analysis.png", dpi=160)
+    fig.savefig(FIG_DIR / "load_analysis.png", dpi=150)
     plt.close(fig)
 
 
-def make_estimator(**params):
-    defaults = {
-        "objective": "reg:squarederror",
-        "tree_method": "hist",
-        "random_state": 42,
-        "n_jobs": 1,
-        "verbosity": 0,
-    }
-    defaults.update(params)
-    return XGBRegressor(**defaults)
-
-
-def tune_model(x_train, y_train, logger, quick=False):
-    if quick:
-        params = {"n_estimators": 200, "max_depth": 6, "learning_rate": 0.05}
-        logger.info("Quick mode: using the stored reproducible parameter set %s", params)
-        model = make_estimator(**params)
-        model.fit(x_train, y_train)
-        return model, params, None
-
-    param_grid = {
-        "n_estimators": [100, 150, 200],
-        "max_depth": [4, 6],
-        "learning_rate": [0.05, 0.10],
-    }
-    cv = KFold(n_splits=5, shuffle=True, random_state=42)
-    search = GridSearchCV(
-        estimator=make_estimator(),
-        param_grid=param_grid,
-        scoring="neg_mean_squared_error",
-        cv=cv,
-        n_jobs=-1,
-        verbose=1,
-        return_train_score=False,
-    )
-    search.fit(x_train, y_train)
-    logger.info("Grid search best parameters: %s", search.best_params_)
-    logger.info("Grid search best CV MSE: %.4f", -search.best_score_)
-    return search.best_estimator_, search.best_params_, float(-search.best_score_)
-
-
-def run_temporal_backtest(data, features, best_params, logger):
-    """Run a small rolling-origin diagnostic with the selected hyperparameters."""
-    x_data = data[features]
-    y_data = data["power_load"]
-    splitter = TimeSeriesSplit(n_splits=4)
-    rows = []
-
-    for fold, (train_idx, valid_idx) in enumerate(splitter.split(x_data), start=1):
-        model = make_estimator(**best_params)
-        model.fit(x_data.iloc[train_idx], y_data.iloc[train_idx])
-        pred = model.predict(x_data.iloc[valid_idx])
-        metrics = regression_metrics(y_data.iloc[valid_idx], pred)
-        metrics["fold"] = fold
-        metrics["train_end"] = str(data.iloc[train_idx[-1]]["time"])
-        metrics["valid_start"] = str(data.iloc[valid_idx[0]]["time"])
-        metrics["valid_end"] = str(data.iloc[valid_idx[-1]]["time"])
-        rows.append(metrics)
-
-    backtest = pd.DataFrame(rows)
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    backtest.to_csv(REPORT_DIR / "temporal_backtest.csv", index=False)
-    logger.info("Temporal backtest MAE mean/std: %.4f / %.4f", backtest["mae"].mean(), backtest["mae"].std())
-    return backtest
-
-
-def plot_feature_importance(model, feature_names):
-    importance = pd.Series(model.feature_importances_, index=feature_names).sort_values(ascending=False).head(15)
-    fig, ax = plt.subplots(figsize=(10, 7))
-    importance.sort_values().plot(kind="barh", ax=ax)
-    ax.set_title("Top feature importances")
-    ax.set_xlabel("XGBoost importance")
+def plot_feature_importance(model, columns):
+    top = pd.Series(model.feature_importances_, index=columns).sort_values().tail(15)
+    fig, ax = plt.subplots(figsize=(9, 6))
+    top.plot.barh(ax=ax)
+    ax.set(xlabel="XGBoost gain importance (normalized)", title="Model feature importance")
     fig.tight_layout()
-    fig.savefig(FIG_DIR / "feature_importance.png", dpi=160)
+    fig.savefig(FIG_DIR / "feature_importance.png", dpi=150)
     plt.close(fig)
 
 
 def train(quick=False):
-    FIG_DIR.mkdir(parents=True, exist_ok=True)
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
-
-    logger = Logger(ROOT, "train_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S")).get_logger()
+    for directory in (FIG_DIR, MODEL_DIR, REPORT_DIR):
+        directory.mkdir(parents=True, exist_ok=True)
     train_data = load_load_data(DATA_DIR / "train.csv")
+    test_data = load_load_data(DATA_DIR / "test.csv")
+    if not train_data["time"].max() < test_data["time"].max():
+        raise ValueError("Test data must extend beyond the training period")
     plot_load_analysis(train_data)
+    processed, names = build_features(train_data, profile="extended")
+    first_eval = next(rolling_windows(len(processed)))[1].size
+    params, search_summary = tune_model(processed, names, first_eval, quick)
+    backtest, interval = run_temporal_backtest(processed, names, params)
 
-    processed, features = build_features(train_data, profile="core")
-    x_data = processed[features]
-    y_data = processed["power_load"]
-
-    # This holdout reproduces the original project benchmark. The separate
-    # August forecast in predict.py is the stricter out-of-time evaluation.
-    x_train, x_holdout, y_train, y_holdout = train_test_split(
-        x_data, y_data, test_size=0.30, random_state=22
-    )
-
-    model, best_params, cv_mse = tune_model(x_train, y_train, logger, quick=quick)
-    holdout_pred = model.predict(x_holdout)
-    holdout_metrics = regression_metrics(y_holdout, holdout_pred)
-
-    naive_1h = regression_metrics(y_holdout, x_holdout["lag_1h"].values)
-    naive_24h = regression_metrics(y_holdout, x_holdout["lag_24h"].values)
-    residual_q90 = float(np.quantile(np.abs(y_holdout.values - holdout_pred), 0.90))
-
-    print("\nGridPulse benchmark holdout")
-    print("Best parameters: {}".format(best_params))
-    print("MAE:  {:.3f}".format(holdout_metrics["mae"]))
-    print("MSE:  {:.3f}".format(holdout_metrics["mse"]))
-    print("RMSE: {:.3f}".format(holdout_metrics["rmse"]))
-    print("R2:   {:.4f}".format(holdout_metrics["r2"]))
-
-    backtest = run_temporal_backtest(processed, features, best_params, logger)
-
-    # Refit on every training row after evaluation. This is the model used by
-    # the forward forecasting script.
-    final_model = make_estimator(**best_params)
-    final_model.fit(x_data, y_data)
-    final_model.save_model(str(MODEL_DIR / "gridpulse_xgb.json"))
-    joblib.dump(final_model, MODEL_DIR / "gridpulse_xgb.joblib")
-    plot_feature_importance(final_model, features)
-
+    model = make_xgb(params).fit(processed[names], processed["power_load"] - processed["lag_1h"])
+    model.save_model(str(MODEL_DIR / "gridpulse_xgb.json"))
+    joblib.dump(model, MODEL_DIR / "gridpulse_xgb.joblib")
+    ridge = make_ridge().fit(processed[names], processed["power_load"])
+    joblib.dump(ridge, MODEL_DIR / "gridpulse_ridge.joblib")
+    plot_feature_importance(model, names)
+    summary = {
+        "evaluation": "six expanding-window chronological backtests; 28-day nonoverlapping test windows",
+        "folds": 6,
+        "mae_min": float(backtest["mae"].min()),
+        "mae_max": float(backtest["mae"].max()),
+        "mae_mean": float(backtest["mae"].mean()),
+        "beats_persistence_folds": int(backtest["beats_persistence"].sum()),
+        "beats_seasonal_naive_folds": int(backtest["beats_seasonal_naive"].sum()),
+    }
     metadata = {
-        "project": "GridPulse - Short-Horizon Energy Forecasting ML Engine",
-        "trained_at": datetime.datetime.now().isoformat(timespec="seconds"),
-        "feature_profile": "core",
-        "feature_names": features,
-        "best_params": best_params,
-        "grid_search_cv_mse": cv_mse,
-        "benchmark_holdout": holdout_metrics,
-        "baseline_lag_1h": naive_1h,
-        "baseline_lag_24h": naive_24h,
-        "temporal_backtest_mae_mean": float(backtest["mae"].mean()),
-        "temporal_backtest_mae_std": float(backtest["mae"].std()),
-        "prediction_interval_abs_error_q90": residual_q90,
+        "project": "GridPulse",
+        "trained_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "run_mode": "quick" if quick else "tuned",
+        "forecast_horizon_hours": 1,
+        "feature_profile": "extended",
+        "prediction_target": "delta_from_previous_hour",
+        "feature_names": names,
+        "best_params": params,
+        "tuning": search_summary,
+        "backtest": summary,
+        "prediction_interval_abs_error_q90": interval,
+        "prediction_interval_note": "Descriptive quantile of backtest residuals; not a calibrated coverage guarantee",
         "training_rows": int(len(processed)),
-        "training_start": str(processed["time"].min()),
-        "training_end": str(processed["time"].max()),
+        "raw_training_rows": int(len(train_data)),
+        "training_start": str(train_data["time"].iloc[0]),
+        "training_end": str(train_data["time"].iloc[-1]),
+        "training_mean_load": float(train_data["power_load"].mean()),
+        "training_data_sha256": file_sha256(DATA_DIR / "train.csv"),
+        "test_data_sha256": file_sha256(DATA_DIR / "test.csv"),
+        "temperature_available": False,
+        "holiday_available": False,
+        "note": "The supplied files contain load and timestamps only; no temperature/holiday covariates or additional training years.",
     }
     save_json(metadata, MODEL_DIR / "metadata.json")
-    save_json({"holdout": holdout_metrics, "lag_1h": naive_1h, "lag_24h": naive_24h}, REPORT_DIR / "benchmark_metrics.json")
-
-    logger.info("Training complete. Holdout metrics: %s", json.dumps(holdout_metrics))
+    save_json(summary, REPORT_DIR / "backtest_summary.json")
+    print(f"Final model trained on {len(processed):,} rows. Six-fold MAE range: {summary['mae_min']:.2f}–{summary['mae_max']:.2f}", flush=True)
     return metadata
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train the GridPulse XGBoost forecaster.")
-    parser.add_argument("--quick", action="store_true", help="Skip grid search and use the stored parameter set.")
+    parser = argparse.ArgumentParser(description="Train GridPulse with honest time-series splits")
+    parser.add_argument("--quick", action="store_true", help="Use documented parameters instead of chronological grid search")
     args = parser.parse_args()
     train(quick=args.quick)
 

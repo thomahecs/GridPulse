@@ -1,28 +1,10 @@
-# Python
-__pycache__/
-*.py[cod]
-
-# Virtual environments
 .venv/
-venv/
-
-# PyCharm
+.venv.gridpulse-backup/
 .idea/
-
-# macOS
 .DS_Store
-
-# Logs
-log/*.log
-
-# Cache
+__MACOSX/
+__pycache__/
 .pytest_cache/
-.ipynb_checkpoints/
-
-# Local environment files
-.env
-
-# Temporary files
-*.tmp
-
+*.py[cod]
 .Rhistory
+log/*.log

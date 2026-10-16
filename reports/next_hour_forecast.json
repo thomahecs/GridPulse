@@ -1,0 +1,7 @@
+{
+  "last_observed_timestamp": "2015-08-31 23:00:00",
+  "forecast_timestamp": "2015-09-01 00:00:00",
+  "forecast_horizon_hours": 1,
+  "predicted_load_dataset_units": 727.1337631225585,
+  "evaluation_note": "Forward prediction only; the actual next-hour load is not present in the archive"
+}
